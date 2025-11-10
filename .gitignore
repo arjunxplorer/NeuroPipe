@@ -1,0 +1,45 @@
+# Documentation files (Markdown) - ignore all except README
+*.md
+!README.md
+
+# Build directories
+build/
+build_new/
+
+# Compiled binaries and libraries
+*.o
+*.a
+*.so
+*.dylib
+
+# Executables
+broker
+broker_legacy
+producer_client
+consumer_client
+simple_app
+robust_app
+test_basic
+test_asio_broker
+
+# Temporary and log files
+*.log
+*.tmp
+*~
+
+# Editor/IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Optional: Text output files
+*.txt
+!CMakeLists.txt
+!RUN_INSTRUCTIONS.txt
+
+# Debug/test scripts (keep these commented if you want them tracked)
+# debug_connection.sh
+# test_manual_flow.sh
+
