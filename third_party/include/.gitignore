@@ -1,0 +1,44 @@
+Makefile
+Makefile.in
+# Documentation files (Markdown)
+*.md
+
+# Build directories
+build/
+build_new/
+
+# Compiled binaries
+broker
+broker_legacy
+producer_client
+consumer_client
+simple_app
+robust_app
+test_basic
+test_asio_broker
+
+# Object files
+*.o
+*.a
+*.so
+*.dylib
+
+# Temporary files
+*.log
+*.tmp
+*~
+
+# Test/debug scripts (optional - uncomment if you don't want them tracked)
+# debug_connection.sh
+# test_manual_flow.sh
+# test_message_format.cpp
+
+# Editor/IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Text output files (optional)
+*.txt
