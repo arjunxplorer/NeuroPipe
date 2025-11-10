@@ -34,10 +34,9 @@ test_asio_broker
 *.swo
 .DS_Store
 
-# Optional: Text output files
+# Text files (ignore all except CMakeLists.txt)
 *.txt
 !CMakeLists.txt
-!RUN_INSTRUCTIONS.txt
 
 # Debug/test scripts (keep these commented if you want them tracked)
 # debug_connection.sh
