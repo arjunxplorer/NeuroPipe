@@ -89,25 +89,7 @@ NeuroPipe/
 
 ```
 
-## Example Usage
 
-### C++ Integration
-
-```cpp
-#include "lib/debug_logger.hpp"
-
-int main() {
-    // Connect to broker
-    DebugLogger logger("my_service");
-    
-    // Log messages
-    logger.info("Application started");
-    logger.error("Something went wrong");
-    logger.metric("cpu_usage", 75.5);
-    
-    return 0;
-}
-```
 
 ### Protocol (Language Agnostic)
 
