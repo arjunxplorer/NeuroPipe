@@ -12,48 +12,41 @@ INCLUDE_DIR = include
 
 # Targets
 BROKER = $(BUILD_DIR)/broker
-BROKER_LEGACY = $(BUILD_DIR)/broker_legacy
 PRODUCER = $(BUILD_DIR)/producer_client
 CONSUMER = $(BUILD_DIR)/consumer_client
 TEST_BASIC = $(BUILD_DIR)/test_basic
 TEST_ASIO = $(BUILD_DIR)/test_asio_broker
+TEST_DEBUG_LOGGER = $(BUILD_DIR)/test_debug_logger
 SIMPLE_APP = $(BUILD_DIR)/simple_app
 ROBUST_APP = $(BUILD_DIR)/robust_app
 DEBUG_LOGGER_LIB = $(BUILD_DIR)/libdebug_logger.a
 
-# Source files (Asio-based)
+# Source files
 BROKER_SRCS = $(SRC_DIR)/broker.cpp $(SRC_DIR)/asio_server.cpp
-BROKER_LEGACY_SRCS = $(SRC_DIR)/broker_legacy.cpp $(SRC_DIR)/server.cpp
 PRODUCER_SRCS = $(SRC_DIR)/producer.cpp
 CONSUMER_SRCS = $(SRC_DIR)/consumer.cpp
 TEST_BASIC_SRCS = $(TEST_DIR)/test_basic.cpp
 TEST_ASIO_SRCS = $(TEST_DIR)/test_asio_broker.cpp $(SRC_DIR)/asio_server.cpp
+TEST_DEBUG_LOGGER_SRCS = $(TEST_DIR)/test_debug_logger.cpp $(SRC_DIR)/asio_server.cpp $(DEBUG_LOGGER_SRCS)
 DEBUG_LOGGER_SRCS = lib/debug_logger.cpp
 SIMPLE_APP_SRCS = examples/simple_app.cpp
 ROBUST_APP_SRCS = examples/robust_app.cpp
 
-.PHONY: all clean test run-broker run-producer run-consumer legacy examples dashboard
+.PHONY: all clean test run-broker run-producer run-consumer examples dashboard
 
-# Default target (Asio version)
-all: $(BUILD_DIR) $(BROKER) $(PRODUCER) $(CONSUMER) $(TEST_BASIC) $(TEST_ASIO)
+# Default target
+all: $(BUILD_DIR) $(BROKER) $(PRODUCER) $(CONSUMER) $(TEST_BASIC) $(TEST_ASIO) $(TEST_DEBUG_LOGGER)
 
 # Build examples
 examples: $(BUILD_DIR) $(DEBUG_LOGGER_LIB) $(SIMPLE_APP) $(ROBUST_APP)
-
-# Build legacy version
-legacy: $(BUILD_DIR) $(BROKER_LEGACY)
 
 # Create build directory
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-# Build Asio broker
+# Build broker
 $(BROKER): $(BROKER_SRCS) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(BROKER_SRCS) -o $(BROKER)
-
-# Build legacy broker
-$(BROKER_LEGACY): $(BROKER_LEGACY_SRCS) | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(BROKER_LEGACY_SRCS) -o $(BROKER_LEGACY)
 
 # Build producer client
 $(PRODUCER): $(PRODUCER_SRCS) | $(BUILD_DIR)
@@ -71,6 +64,10 @@ $(TEST_BASIC): $(TEST_BASIC_SRCS) | $(BUILD_DIR)
 $(TEST_ASIO): $(TEST_ASIO_SRCS) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(TEST_ASIO_SRCS) -o $(TEST_ASIO)
 
+# Build debug logger test
+$(TEST_DEBUG_LOGGER): $(TEST_DEBUG_LOGGER_SRCS) | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(TEST_DEBUG_LOGGER_SRCS) -o $(TEST_DEBUG_LOGGER)
+
 # Build debug logger library
 $(DEBUG_LOGGER_LIB): $(DEBUG_LOGGER_SRCS) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $(DEBUG_LOGGER_SRCS) -o $(BUILD_DIR)/debug_logger.o
@@ -85,12 +82,15 @@ $(ROBUST_APP): $(ROBUST_APP_SRCS) $(DEBUG_LOGGER_LIB) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(ROBUST_APP_SRCS) $(DEBUG_LOGGER_LIB) -o $(ROBUST_APP)
 
 # Run tests
-test: $(TEST_BASIC) $(TEST_ASIO)
+test: $(TEST_BASIC) $(TEST_ASIO) $(TEST_DEBUG_LOGGER)
 	@echo "Running basic tests..."
 	@./$(TEST_BASIC)
 	@echo ""
 	@echo "Running Asio broker tests..."
 	@./$(TEST_ASIO)
+	@echo ""
+	@echo "Running DebugLogger tests..."
+	@./$(TEST_DEBUG_LOGGER)
 
 # Run broker
 run-broker: $(BROKER)

@@ -23,6 +23,15 @@ void Session::start() {
     do_read();
 }
 
+void Session::shutdown() {
+    // Send shutdown notification, then close the socket
+    auto self(shared_from_this());
+    std::string msg = "ERROR:SERVER_SHUTDOWN\n";
+    asio::error_code ignored;
+    asio::write(socket_, asio::buffer(msg), ignored);
+    socket_.close(ignored);
+}
+
 void Session::deliver(const std::string& message) {
     bool write_in_progress = false;
     {
@@ -105,18 +114,25 @@ void Session::process_message(const std::string& message) {
             deliver("ERROR:INVALID_FORMAT\n");
             return;
         }
-        
+
         size_t first_colon = message.find(':', 8);
         if (first_colon != std::string::npos && first_colon > 8) {
             std::string topic = message.substr(8, first_colon - 8);
             std::string payload = message.substr(first_colon + 1);
-            
+
             // Validate topic is not empty
             if (topic.empty()) {
                 deliver("ERROR:EMPTY_TOPIC\n");
                 return;
             }
-            
+
+            // Check max message size
+            size_t max_size = broker_.get_config().max_message_size;
+            if (payload.size() > max_size) {
+                deliver("ERROR:MESSAGE_TOO_LARGE\n");
+                return;
+            }
+
             broker_.publish(topic, payload);
             deliver("OK:PUBLISHED\n");
         } else {
@@ -162,6 +178,26 @@ void Session::process_message(const std::string& message) {
     else if (message.find("PING") == 0) {
         deliver("PONG\n");
     }
+    else if (message.find("STATS") == 0) {
+        size_t sessions = broker_.get_active_sessions();
+        size_t topics = broker_.get_topic_count();
+        uint64_t total_msgs = broker_.get_topic_manager().get_total_messages();
+        deliver("{\"sessions\":" + std::to_string(sessions) +
+                ",\"topics\":" + std::to_string(topics) +
+                ",\"messages\":" + std::to_string(total_msgs) + "}\n");
+    }
+    else if (message.find("TOPICS") == 0) {
+        auto topic_list = broker_.get_topic_manager().get_topic_list();
+        std::string json = "[";
+        bool first = true;
+        for (const auto& [name, count] : topic_list) {
+            if (!first) json += ",";
+            json += "{\"name\":\"" + name + "\",\"subscribers\":" + std::to_string(count) + "}";
+            first = false;
+        }
+        json += "]\n";
+        deliver(json);
+    }
     else {
         deliver("ERROR:UNKNOWN_COMMAND\n");
     }
@@ -199,17 +235,18 @@ void TopicManager::unsubscribe_all(std::shared_ptr<Session> session) {
 
 void TopicManager::publish(const std::string& topic, const std::string& payload) {
     Message msg(topic, payload);
-    
+
     std::vector<std::shared_ptr<Session>> subscribers;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        
+
         // Assign sequence number
         msg.sequence = sequence_counter_++;
-        
+        total_messages_++;
+
         // Store message in queue
         topic_queues_[topic].push(msg);
-        
+
         // Get subscribers
         auto it = subscriptions_.find(topic);
         if (it != subscriptions_.end()) {
@@ -265,12 +302,22 @@ size_t TopicManager::get_subscriber_count(const std::string& topic) const {
     return it != subscriptions_.end() ? it->second.size() : 0;
 }
 
+std::vector<std::pair<std::string, size_t>> TopicManager::get_topic_list() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<std::pair<std::string, size_t>> result;
+    for (const auto& [topic, subscribers] : subscriptions_) {
+        result.emplace_back(topic, subscribers.size());
+    }
+    return result;
+}
+
 // ============================================================================
 // BrokerServer Implementation
 // ============================================================================
 
-BrokerServer::BrokerServer(asio::io_context& io_context, uint16_t port)
-    : acceptor_(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), port)) {
+BrokerServer::BrokerServer(asio::io_context& io_context, uint16_t port, const BrokerConfig& config)
+    : acceptor_(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), port)),
+      config_(config) {
     log_info("BrokerServer initialized on port " + std::to_string(port));
 }
 
@@ -293,20 +340,35 @@ void BrokerServer::stop() {
     if (!running_) {
         return;
     }
-    
+
     running_ = false;
-    
-    // Close acceptor
+    log_info("BrokerServer stopping...");
+
+    // Close acceptor (stop accepting new connections)
     if (acceptor_.is_open()) {
         acceptor_.close();
     }
-    
-    // Close all sessions
+
+    // Notify and close all sessions gracefully
+    std::vector<std::shared_ptr<Session>> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(sessions_mutex_);
+        snapshot.assign(sessions_.begin(), sessions_.end());
+    }
+
+    for (auto& session : snapshot) {
+        try {
+            session->shutdown();
+        } catch (...) {
+            // Ignore errors during shutdown
+        }
+    }
+
     {
         std::lock_guard<std::mutex> lock(sessions_mutex_);
         sessions_.clear();
     }
-    
+
     log_info("BrokerServer stopped");
 }
 
@@ -362,5 +424,10 @@ size_t BrokerServer::get_active_sessions() const {
 
 size_t BrokerServer::get_topic_count() const {
     return topic_manager_.get_topic_count();
+}
+
+std::vector<std::shared_ptr<Session>> BrokerServer::get_sessions_snapshot() const {
+    std::lock_guard<std::mutex> lock(sessions_mutex_);
+    return std::vector<std::shared_ptr<Session>>(sessions_.begin(), sessions_.end());
 }
 

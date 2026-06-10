@@ -11,6 +11,7 @@
 #include <functional>
 #include "../include/message.hpp"
 #include "utils.hpp"
+#include "config.hpp"
 
 // Forward declarations
 class Session;
@@ -21,20 +22,21 @@ class Session : public std::enable_shared_from_this<Session> {
 public:
     Session(asio::ip::tcp::socket socket, BrokerServer& broker);
     ~Session();
-    
+
     void start();
     void deliver(const std::string& message);
+    void shutdown();  // Graceful: notify then close
     std::string get_client_id() const { return client_id_; }
-    
+
 private:
     void do_read();
     void do_write();
     void process_message(const std::string& message);
-    
+
     asio::ip::tcp::socket socket_;
     BrokerServer& broker_;
     std::string client_id_;
-    
+
     asio::streambuf read_buffer_;
     std::queue<std::string> write_queue_;
     std::mutex write_mutex_;
@@ -67,57 +69,68 @@ public:
     // Get topic statistics
     size_t get_topic_count() const;
     size_t get_subscriber_count(const std::string& topic) const;
-    
+    uint64_t get_total_messages() const { return total_messages_; }
+
+    // Get all topic names and their subscriber counts
+    std::vector<std::pair<std::string, size_t>> get_topic_list() const;
+
 private:
     // Map: topic -> set of subscribed sessions
     std::unordered_map<std::string, std::unordered_set<std::shared_ptr<Session>>> subscriptions_;
-    
+
     // Map: topic -> message queue
     std::unordered_map<std::string, std::queue<Message>> topic_queues_;
-    
+
     mutable std::mutex mutex_;
     uint64_t sequence_counter_ = 0;
+    uint64_t total_messages_ = 0;
 };
 
 // Main broker server with Asio
 class BrokerServer {
 public:
-    BrokerServer(asio::io_context& io_context, uint16_t port);
+    BrokerServer(asio::io_context& io_context, uint16_t port, const BrokerConfig& config = BrokerConfig());
     ~BrokerServer();
-    
+
     // Start accepting connections
     void start();
-    
-    // Stop the broker
+
+    // Stop the broker (graceful: notifies clients before closing)
     void stop();
-    
+
     // Publish message to topic
     void publish(const std::string& topic, const std::string& payload);
-    
+
     // Subscribe a session to a topic
     void subscribe(const std::string& topic, std::shared_ptr<Session> session);
-    
+
     // Unsubscribe session from topic
     void unsubscribe(const std::string& topic, std::shared_ptr<Session> session);
-    
+
     // Handle session disconnect
     void on_session_disconnect(std::shared_ptr<Session> session);
-    
+
     // Get broker statistics
     size_t get_active_sessions() const;
     size_t get_topic_count() const;
-    
+
+    // Get a copy of all active sessions (for shutdown notification)
+    std::vector<std::shared_ptr<Session>> get_sessions_snapshot() const;
+
+    const BrokerConfig& get_config() const { return config_; }
+
     TopicManager& get_topic_manager() { return topic_manager_; }
-    
+
 private:
     void do_accept();
-    
+
     asio::ip::tcp::acceptor acceptor_;
     TopicManager topic_manager_;
-    
+    BrokerConfig config_;
+
     std::unordered_set<std::shared_ptr<Session>> sessions_;
     mutable std::mutex sessions_mutex_;
-    
+
     bool running_ = false;
 };
 

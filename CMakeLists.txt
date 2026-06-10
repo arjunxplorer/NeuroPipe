@@ -27,13 +27,6 @@ add_executable(broker
 )
 target_link_libraries(broker PRIVATE Threads::Threads)
 
-# Legacy broker (old implementation)
-add_executable(broker_legacy 
-    src/broker_legacy.cpp 
-    src/server.cpp
-)
-target_link_libraries(broker_legacy PRIVATE Threads::Threads)
-
 # Producer client executable
 add_executable(producer_client 
     src/producer.cpp
@@ -78,8 +71,16 @@ add_executable(test_asio_broker
 )
 target_link_libraries(test_asio_broker PRIVATE Threads::Threads)
 
+add_executable(test_debug_logger
+    tests/test_debug_logger.cpp
+    src/asio_server.cpp
+    lib/debug_logger.cpp
+)
+target_link_libraries(test_debug_logger PRIVATE Threads::Threads)
+
 add_test(NAME BasicTest COMMAND test_basic)
 add_test(NAME AsioTest COMMAND test_asio_broker)
+add_test(NAME DebugLoggerTest COMMAND test_debug_logger)
 
 # Install targets
 install(TARGETS broker producer_client consumer_client

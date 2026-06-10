@@ -7,7 +7,7 @@
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-blue?style=flat-square&logo=cplusplus)
 ![License](https://img.shields.io/badge/License-Educational-green?style=flat-square)
 ![Build](https://img.shields.io/badge/Build-CMake%20%7C%20Make-orange?style=flat-square)
-![Tests](https://img.shields.io/badge/Tests-11%20passing-brightgreen?style=flat-square)
+![Tests](https://img.shields.io/badge/Tests-30%20passing-brightgreen?style=flat-square)
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS-lightgrey?style=flat-square)
 
 [Features](#features) · [Quick Start](#quick-start) · [Architecture](#architecture) · [Protocol](#protocol-reference) · [API](#debuglogger-api) · [Build](#building-from-source) · [Testing](#testing)
@@ -24,6 +24,7 @@
 - [Architecture](#architecture)
 - [Project Structure](#project-structure)
 - [Protocol Reference](#protocol-reference)
+- [Configuration](#configuration)
 - [DebugLogger API](#debuglogger-api)
 - [Live Dashboards](#live-dashboards)
 - [Building from Source](#building-from-source)
@@ -52,10 +53,13 @@ The broker uses a simple, text-based protocol that is completely language-agnost
 | **Language Agnostic** | Simple newline-delimited TCP protocol — use from any language |
 | **Thread-Safe** | Concurrent operations with mutex-protected shared resources |
 | **Auto-Reconnect** | Client library handles connection recovery transparently |
+| **Graceful Shutdown** | `SIGINT`/`SIGTERM` handling via `asio::signal_set` — notifies clients before exit |
+| **Configuration File** | INI-style `neuropipe.conf` with CLI overrides for all settings |
+| **JSON Logging** | Structured JSON log output option for machine-parseable logs |
+| **Health Endpoint** | `STATS` and `TOPICS` commands return JSON for monitoring |
 | **Live Dashboards** | Real-time log visualization shell scripts with severity filtering |
-| **Multi-Topic Routing** | Messages routed to `debug`, `errors`, `warnings`, and `metrics` topics |
 | **Graceful Degradation** | Applications work with or without the broker running |
-| **Comprehensive Testing** | Unit, integration, and edge case test suites |
+| **Comprehensive Testing** | Unit, integration, DebugLogger, and edge case test suites |
 
 ---
 
@@ -64,7 +68,7 @@ The broker uses a simple, text-based protocol that is completely language-agnost
 ### 1. Build
 
 ```bash
-make all         # Build broker and clients
+make all         # Build broker, clients, and tests
 make examples    # Build example applications
 ```
 
@@ -93,6 +97,10 @@ echo "SUBSCRIBE:debug" | nc localhost 9092
 
 # Publish a message (in another terminal)
 echo "PUBLISH:debug:Hello from NeuroPipe" | nc localhost 9092
+
+# Check broker health
+echo "STATS" | nc localhost 9092
+echo "TOPICS" | nc localhost 9092
 ```
 
 ---
@@ -127,6 +135,7 @@ echo "PUBLISH:debug:Hello from NeuroPipe" | nc localhost 9092
 | **Message** | `include/message.hpp` | Data structure: `{topic, payload, sequence, timestamp}` |
 | **ThreadSafeQueue** | `src/utils.hpp` | Template queue with mutex + condition variable for producer/consumer patterns |
 | **DebugLogger** | `lib/debug_logger.cpp` | Client library with auto-reconnect, message escaping, and multi-level logging |
+| **BrokerConfig** | `src/config.hpp` | Configuration struct with INI parser |
 
 ### Data Flow
 
@@ -143,13 +152,13 @@ echo "PUBLISH:debug:Hello from NeuroPipe" | nc localhost 9092
 ```
 NeuroPipe/
 ├── src/                        # Core broker implementation
-│   ├── broker.cpp              # Main broker entry point (signal handling, stats)
+│   ├── broker.cpp              # Main entry point (signal handling, config loading, stats)
 │   ├── asio_server.hpp         # Session, TopicManager, BrokerServer declarations
 │   ├── asio_server.cpp         # Async networking and protocol implementation
-│   ├── producer.cpp            # Interactive publisher client
-│   ├── consumer.cpp            # Subscriber client
-│   ├── utils.hpp               # ThreadSafeQueue, logging utilities
-│   └── server.hpp / server.cpp # Legacy POSIX socket implementation
+│   ├── config.hpp              # BrokerConfig struct and INI parser
+│   ├── producer.cpp            # Interactive publisher client (with reconnect)
+│   ├── consumer.cpp            # Subscriber client (with auto-reconnect)
+│   └── utils.hpp               # ThreadSafeQueue, logging (text + JSON), log levels
 │
 ├── include/
 │   └── message.hpp             # Message struct definition
@@ -171,11 +180,13 @@ NeuroPipe/
 ├── tests/                      # Test suite
 │   ├── test_basic.cpp          # Unit tests (Message, ThreadSafeQueue, logging)
 │   ├── test_asio_broker.cpp    # Integration tests (11 broker tests)
+│   ├── test_debug_logger.cpp   # DebugLogger tests (15 tests: escaping, reconnect, threading)
 │   └── test_edge_cases.sh      # End-to-end edge case suite (11 tests via netcat)
 │
 ├── third_party/                # Vendored dependencies
 │   └── include/asio/           # Standalone Asio (header-only)
 │
+├── neuropipe.conf              # Default configuration file
 ├── CMakeLists.txt              # CMake build configuration
 ├── Makefile                    # Make build configuration
 └── README.md
@@ -195,12 +206,15 @@ NeuroPipe uses a simple text-based protocol. All messages are newline-delimited 
 | **Subscribe** | `SUBSCRIBE:<topic>\n` | `OK:SUBSCRIBED:<topic>\n` |
 | **Unsubscribe** | `UNSUBSCRIBE:<topic>\n` | `OK:UNSUBSCRIBED:<topic>\n` |
 | **Ping** | `PING\n` | `PONG\n` |
+| **Stats** | `STATS\n` | `{"sessions":N,"topics":N,"messages":N}\n` |
+| **Topics** | `TOPICS\n` | `[{"name":"...","subscribers":N},...]\n` |
 
 ### Server-to-Client Messages
 
 | Type | Format |
 |------|--------|
 | **Message delivery** | `MESSAGE:<topic>:<payload>\n` |
+| **Shutdown notification** | `ERROR:SERVER_SHUTDOWN\n` |
 
 ### Error Responses
 
@@ -210,6 +224,8 @@ NeuroPipe uses a simple text-based protocol. All messages are newline-delimited 
 | `ERROR:INVALID_FORMAT\n` | Malformed command |
 | `ERROR:EMPTY_TOPIC\n` | Missing topic in SUBSCRIBE/PUBLISH |
 | `ERROR:UNKNOWN_COMMAND\n` | Unrecognized command |
+| `ERROR:MESSAGE_TOO_LARGE\n` | Payload exceeds `max_message_size` |
+| `ERROR:SERVER_SHUTDOWN\n` | Broker is shutting down gracefully |
 
 ### Example Session
 
@@ -223,6 +239,13 @@ OK:SUBSCRIBED:debug
 MESSAGE:debug:Application started
 MESSAGE:debug:Processing request #1234
 MESSAGE:errors:Connection timeout to database
+
+# Check broker health
+STATS
+{"sessions":3,"topics":2,"messages":15}
+
+TOPICS
+[{"name":"debug","subscribers":2},{"name":"errors","subscribers":1}]
 ```
 
 ### Using from Other Languages
@@ -253,6 +276,57 @@ client.on('data', (data) => console.log(data.toString()));
 
 ---
 
+## Configuration
+
+NeuroPipe can be configured via `neuropipe.conf` or CLI flags. CLI flags override the config file.
+
+### Config File (`neuropipe.conf`)
+
+```ini
+[server]
+port = 9092
+
+[limits]
+# max_message_size = 1048576
+# max_subscribers_per_topic = 0
+
+[logging]
+log_level = INFO
+# log_format = json
+```
+
+### CLI Flags
+
+```bash
+./build/broker --port 9093                    # Override port
+./build/broker --config /path/to/my.conf      # Custom config file
+./build/broker --log-format json              # JSON log output
+./build/broker --help                         # Show all options
+```
+
+### Configuration Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `port` | `9092` | TCP listen port |
+| `max_message_size` | `1048576` (1MB) | Maximum payload size in bytes |
+| `max_subscribers_per_topic` | `0` (unlimited) | Subscriber limit per topic |
+| `log_level` | `INFO` | Minimum log level: `DEBUG`, `INFO`, `WARN`, `ERROR` |
+| `log_format` | `text` | Output format: `text` (human-readable) or `json` (machine-parseable) |
+
+### JSON Log Output
+
+When `log_format = json`, each log line is a JSON object:
+
+```json
+{"timestamp":"2026-06-10 16:19:47.925","level":"INFO","message":"BrokerServer started"}
+{"timestamp":"2026-06-10 16:19:48.930","level":"ERROR","message":"Connection failed"}
+```
+
+This is useful for piping to `jq`, shipping to Elasticsearch, or any structured log aggregator.
+
+---
+
 ## DebugLogger API
 
 The `DebugLogger` class provides a high-level C++ API for applications to publish logs and metrics to the broker.
@@ -266,19 +340,19 @@ The `DebugLogger` class provides a high-level C++ API for applications to publis
 ### Constructor
 
 ```cpp
-DebugLogger logger("localhost", 9092, "my-service");
+DebugLogger logger("my-service", "127.0.0.1", 9092);
 ```
 
-| Parameter | Description |
-|-----------|-------------|
-| `host` | Broker hostname |
-| `port` | Broker port |
-| `service_name` | Identifier for this service (included in all messages) |
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `service_name` | *(required)* | Identifier for this service (included in all messages) |
+| `broker_host` | `"127.0.0.1"` | Broker hostname |
+| `broker_port` | `9092` | Broker port |
 
 ### Logging Methods
 
 ```cpp
-logger.info("Processing request", "order-1234");
+logger.info("Processing request");
 logger.warn("Slow response from cache");
 logger.error("Database connection failed");
 logger.debug("Payload size: " + std::to_string(size));
@@ -294,14 +368,17 @@ logger.debug("Payload size: " + std::to_string(size));
 ### Metrics
 
 ```cpp
-logger.metric("response_time", 42.5);    // Publishes to "metrics" topic
-logger.metric("queue_depth", 128);
+logger.metric("response_time_ms", 42.5);    // double
+logger.metric("queue_depth", 128);           // int
+logger.metric("status", "healthy");          // string
 ```
+
+All metrics are published to the `metrics` topic in `name=value` format.
 
 ### Key Behaviors
 
 - **Auto-Reconnect**: If the broker connection drops, the logger automatically reconnects on the next send
-- **Message Escaping**: Colons and newlines in payloads are escaped to prevent protocol corruption
+- **Message Escaping**: Colons, newlines, and backslashes in payloads are escaped to prevent protocol corruption
 - **Thread-Safe**: All methods can be called concurrently from multiple threads
 - **Graceful Degradation**: If the broker is unreachable, messages are silently dropped — the application continues running
 
@@ -388,22 +465,21 @@ make robust_app
 | `make run-consumer` | Build and run the consumer client |
 | `make run-simple-app` | Build and run the example app |
 | `make run-robust-app` | Build and run the robust example app |
+| `make test` | Run all test suites |
 | `make test-edge-cases` | Run the edge case test suite |
 
 ---
 
 ## Testing
 
-NeuroPipe includes three layers of testing:
+NeuroPipe includes four layers of testing:
 
 ### Unit Tests
 
 Tests for core data structures and utilities:
 
 ```bash
-# Build and run
-make test_basic
-./build/test_basic
+make test_basic && ./build/test_basic
 ```
 
 Covers: `Message` creation, `ThreadSafeQueue` (single and multi-threaded), logging functions.
@@ -413,19 +489,26 @@ Covers: `Message` creation, `ThreadSafeQueue` (single and multi-threaded), loggi
 Tests the broker's protocol handling with real TCP connections:
 
 ```bash
-# Build and run (uses CTest)
-make test_asio_broker
-./build/test_asio_broker
+make test_asio_broker && ./build/test_asio_broker
 ```
 
 Covers (11 tests): broker startup, client connection, ping/pong, subscribe, publish, publish-and-receive, multiple subscribers, unsubscribe, multiple topics, invalid commands, session disconnect.
+
+### DebugLogger Tests
+
+Tests the client library with a real broker:
+
+```bash
+make test_debug_logger && ./build/test_debug_logger
+```
+
+Covers (15 tests): connection, connection failure, info/warn/error/debug messages, metric types (double/int/string), message escaping (newlines, colons, backslashes), reconnection, raw publish, thread safety (5 threads × 20 messages).
 
 ### Edge Case Tests
 
 End-to-end tests using netcat against a running broker:
 
 ```bash
-# Start broker first, then:
 make test-edge-cases
 # or
 ./tests/test_edge_cases.sh
@@ -436,11 +519,10 @@ Covers (11 tests): broker not running, empty messages, malformed commands, speci
 ### Full Test Suite
 
 ```bash
-# Run all tests
-make test_basic && ./build/test_basic
-make test_asio_broker && ./build/test_asio_broker
-./tests/test_edge_cases.sh
+make test
 ```
+
+Runs all 26+ tests across three test suites.
 
 ---
 
@@ -481,7 +563,7 @@ If you'd like to contribute:
 Please ensure all tests pass before submitting:
 
 ```bash
-make test-edge-cases
+make test
 ```
 
 ---
