@@ -6,6 +6,9 @@
 build/
 build_new/
 
+# Clangd cache
+.cache/
+
 # Compiled binaries and libraries
 *.o
 *.a
@@ -21,6 +24,7 @@ simple_app
 robust_app
 test_basic
 test_asio_broker
+test_debug_logger
 
 # Temporary and log files
 *.log
